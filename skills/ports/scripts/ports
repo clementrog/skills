@@ -1,0 +1,325 @@
+#!/usr/bin/env bash
+# ports: local servers listening on this Mac, and a quick way to stop them.
+#
+#   ports                    dev servers by project: port, uptime, folder, command
+#   ports --all              also apps and background services (listed, never killed)
+#   ports kill 3000 8911     stop the dev servers on those ports
+#   ports kill --older 7d    stop every dev server up longer than that (d, h or m)
+#   ports kill -9 3000       same, with SIGKILL for one that ignores the first ask
+#   ports --token            short status-line token, cached, empty when none
+#   ports --token --fresh    same, recomputed now
+#   ports --tsv              dev servers for a script, tab-separated
+#
+# A dev server is any listener that is not an app (/Applications, ~/Library,
+# /System…), not a launchd service (Homebrew Postgres…) and not an agent itself.
+# lan = reachable from the network, not only from this Mac.
+# Token: "12 ports, 9 old", where old means up for more than a day.
+
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/ports"
+# Folders that hold one project each, colon-separated. A server running under
+# ~/code/site is shown as project "site".
+ROOTS="${PORTS_ROOTS:-$HOME/projects:$HOME/clients:$HOME/code:$HOME/src:$HOME/dev:$HOME/Developer:$HOME/repos}"
+TTL=30
+OLD=86400
+TAB=$'\t'
+
+# One line per listening process:
+#   port  pid  kind(dev|app|service)  seconds up  lan(0|1)  folder  command  all ports  project
+rows() {
+  local listen pids procs parents
+  listen=$(lsof -nP -iTCP -sTCP:LISTEN -Fpn 2>/dev/null)
+  [ -n "$listen" ] || return 0
+  pids=$(printf '%s\n' "$listen" | sed -n 's/^p//p' | sort -un | paste -sd, -)
+  procs=$(ps -o pid=,ppid=,etime=,args= -p "$pids" 2>/dev/null)
+  parents=$(printf '%s\n' "$procs" | awk '$2 > 1 { print $2 }' | sort -un | paste -sd, -)
+  {
+    printf '%s\n' "$listen" | sed 's/^/L/'
+    lsof -a -p "$pids${parents:+,$parents}" -d cwd,txt -Fpfn 2>/dev/null | sed 's/^/F/'
+    launchctl list 2>/dev/null | awk '$1 ~ /^[0-9]+$/ { print "S" $1 }'
+    printf '%s\n' "$procs" | sed 's/^/P/'
+  } | awk -v home="$HOME" -v user="$(id -un)" -v rootlist="$ROOTS" '
+    function secs(e,   d, n, t) {
+      d = 0
+      if (e ~ /-/) { split(e, t, "-"); d = t[1]; e = t[2] }
+      n = split(e, t, ":")
+      if (n == 3) return d * 86400 + t[1] * 3600 + t[2] * 60 + t[3]
+      return d * 86400 + t[1] * 60 + t[2]
+    }
+    function base(p) { sub(/.*\//, "", p); return p }
+    function in_app(e) {
+      return e ~ /^\/(Applications|System|Library)\// || e ~ /^\/usr\/(libexec|sbin)\// ||
+        e ~ /^\/Users\/Shared\// ||
+        index(e, home "/Library/") == 1 || index(e, home "/Applications/") == 1
+    }
+    function agent(e) { return e ~ /\/claude\/versions\// || base(e) ~ /^(claude|codex)/ }
+    # Folder as shown to a person: relative to its project, ~ for home, a short
+    # name for agent scratchpads.
+    function where(p,   rest) {
+      if (p == "" || p == "/") return "-"
+      if (root(p) != "") {
+        rest = substr(p, index(p, "/" root(p)) + length(root(p)) + 2)
+        return rest == "" ? "." : rest
+      }
+      if (p ~ scratch) {
+        rest = p; sub(/.*\/scratchpad/, "", rest)
+        return "claude scratchpad" rest
+      }
+      if (index(p, home "/") == 1) return "~" substr(p, length(home) + 1)
+      if (p == home) return "~"
+      return p
+    }
+    # Project folder under one of the roots in $PORTS_ROOTS, "" when the path
+    # is elsewhere.
+    function root(p,   i, r) {
+      for (i = 1; i <= nroots; i++) {
+        if (index(p, roots[i] "/") == 1) {
+          r = substr(p, length(roots[i]) + 2)
+          sub(/\/.*/, "", r); return r
+        }
+      }
+      return ""
+    }
+    # Project a server belongs to: from its folder, from the session that owns
+    # the scratchpad it runs in, or from a path on its command line.
+    function project(p, a,   n, w, i) {
+      if (p ~ scratch) {
+        sub(scratch, "", p); sub(/\/.*/, "", p)
+        for (i = 1; i <= nroots; i++)
+          if (index(p, enc[i] "-") == 1) { p = substr(p, length(enc[i]) + 2); break }
+        return p == "" ? "-" : p
+      }
+      if (root(p) != "") return root(p)
+      n = split(a, w, " ")
+      for (i = 2; i <= n; i++) if (root(w[i]) != "") return root(w[i])
+      if (p == "" || p == "/" || p == home) return "-"
+      return base(p)
+    }
+    function what(a,   n, w, i, out) {
+      n = split(a, w, " ")
+      out = base(w[1])
+      for (i = 2; i <= n; i++) {
+        # node loader flags (tsx and friends) say nothing about what is served
+        if (w[i] ~ /^--(require|import|loader)$/) { i++; continue }
+        out = out " " (w[i] ~ /^\// ? base(w[i]) : w[i])
+      }
+      if (out ~ /^Python /) sub(/^Python/, "python", out)
+      return out
+    }
+    BEGIN {
+      scratch = "^/private/tmp/claude-[0-9]+/-Users-" user
+      nroots = split(rootlist, roots, ":")
+      # A scratchpad folder is named after its session folder, with every
+      # character that is not a letter or a digit written as "-": -projects-site
+      # for ~/projects/site. enc[i] is that name for root i, under home.
+      for (i = 1; i <= nroots; i++) {
+        d = roots[i]
+        if (index(d, home "/") == 1) d = substr(d, length(home) + 1)
+        gsub(/[^A-Za-z0-9]/, "-", d)
+        enc[i] = d
+      }
+    }
+    /^Lp/ { pid = substr($0, 3); next }
+    /^Ln/ {
+      a = substr($0, 3); port = a; sub(/.*:/, "", port); host = a; sub(/:[0-9]+$/, "", host)
+      if (!((pid, port) in seen)) {
+        seen[pid, port] = 1
+        ports[pid] = (pid in ports) ? ports[pid] "," port : port
+        if (!(pid in low) || port + 0 < low[pid]) low[pid] = port + 0
+      }
+      if (host !~ /^127\./ && host != "[::1]") lan[pid] = 1
+      next
+    }
+    /^Fp/ { pid = substr($0, 3); fd = ""; next }
+    /^Ff/ { fd = substr($0, 3); next }
+    /^Fn/ {
+      if (fd == "cwd") cwd[pid] = substr($0, 3)
+      else if (fd == "txt" && !(pid in exe)) exe[pid] = substr($0, 3)
+      next
+    }
+    /^S/ { service[substr($0, 2)] = 1; next }
+    /^P/ {
+      line = substr($0, 2); sub(/^ +/, "", line)
+      split(line, f, " ")
+      pid = f[1]; parent[pid] = f[2]; up[pid] = secs(f[3])
+      sub(/^[0-9]+ +[0-9]+ +[^ ]+ +/, "", line); args[pid] = line
+      next
+    }
+    END {
+      for (pid in ports) {
+        e = exe[pid]; pe = exe[parent[pid]]; kind = "dev"
+        if (pid in service) kind = "service"
+        else if (in_app(e) || agent(e)) kind = "app"
+        # Started directly by an app (not through a shell or an agent): its helper.
+        else if (in_app(pe) && !agent(pe)) kind = "app"
+        n = split(ports[pid], q, ","); rest = ""
+        for (i = 1; i <= n; i++) if (q[i] + 0 != low[pid]) rest = rest (rest == "" ? "" : ",") q[i]
+        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", low[pid], pid, kind, up[pid] + 0,
+          lan[pid] + 0, where(cwd[pid]), what(args[pid]), low[pid] (rest == "" ? "" : "," rest),
+          (kind != "dev" && root(cwd[pid]) == "" ? "-" : project(cwd[pid], args[pid]))
+      }
+    }' | sort -t"$TAB" -k1,1n
+}
+
+age() {
+  local s="$1"
+  if [ "$s" -ge 86400 ]; then printf '%dd' $((s / 86400))
+  elif [ "$s" -ge 3600 ]; then printf '%dh' $((s / 3600))
+  else printf '%dm' $((s / 60)); fi
+}
+
+plural() { [ "$1" = 1 ] && printf '%s %s' "$1" "$2" || printf '%s %ss' "$1" "$2"; }
+
+make_token() {
+  rows | awk -F"$TAB" -v old="$OLD" '
+    $3 == "dev" { n++; if ($4 >= old) o++ }
+    END { if (n) { printf "%d port%s", n, (n == 1 ? "" : "s"); if (o) printf ", %d old", o } }'
+}
+
+cmd_token() {
+  local f="$CACHE/token" now mt
+  mkdir -p "$CACHE"
+  [ "${1:-}" = "--fresh" ] && rm -f "$f"
+  if [ -f "$f" ]; then
+    cat "$f"
+    now=$(date +%s)
+    mt=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+    if [ $((now - mt)) -ge "$TTL" ]; then
+      # Serve the old value now, refresh behind it.
+      touch "$f"
+      ( make_token > "$f.$$" && mv "$f.$$" "$f" ) </dev/null >/dev/null 2>&1 &
+    fi
+  else
+    make_token > "$f.$$" && mv "$f.$$" "$f"
+    cat "$f"
+  fi
+}
+
+# One line per dev server, by port:
+#   port  started (epoch seconds)  lan(0|1)  project  folder  command
+# Asked every few seconds by each open pane, so the full scan runs only when
+# the set of listeners has changed since the last one (netstat says that
+# fast), or this script has.
+cmd_tsv() {
+  local f="$CACHE/tsv" sig
+  mkdir -p "$CACHE"
+  sig=$(netstat -anv -p tcp 2>/dev/null | awk '
+    $6 == "LISTEN" { for (i = 7; i <= NF; i++) if ($i ~ /:[0-9]+$/) { print $4, $i; break } }' | sort)
+  [ -n "$sig" ] && sig="$(stat -f %m "$0" 2>/dev/null) $ROOTS $sig"
+  if [ -n "$sig" ] && [ -f "$f" ] && [ "$sig" = "$(cat "$f.sig" 2>/dev/null)" ]; then
+    cat "$f"
+    return 0
+  fi
+  rows | awk -F"$TAB" -v now="$(date +%s)" '
+    $3 == "dev" { printf "%s\t%s\t%s\t%s\t%s\t%s\n", $1, now - $4, $5, $9, $6, $7 }' > "$f.$$" || return 1
+  mv "$f.$$" "$f"
+  printf '%s\n' "$sig" > "$f.sig.$$" && mv "$f.sig.$$" "$f.sig"
+  cat "$f"
+}
+
+cmd_list() {
+  local all="${1:-}" fmt data n=0 o=0 np port pid kind up lan dir cmd allports proj net
+  data=$(rows)
+  if [ -z "$all" ]; then data=$(printf '%s\n' "$data" | awk -F"$TAB" '$3 == "dev"'); fi
+  if [ -z "$data" ]; then echo "no dev servers listening"; return 0; fi
+  # Grouped by project, the ones with no project last.
+  data=$(printf '%s\n' "$data" | awk -F"$TAB" '{ print ($9 == "-" ? "1" : "0") "\t" $0 }' |
+    sort -t"$TAB" -k1,1 -k10,10 -k2,2n | cut -f2-)
+  fmt='%-6s %-4s %-4s %-22s %-34s %s\n'
+  [ -n "$all" ] && fmt='%-6s %-4s %-4s %-7s %-22s %-34s %s\n'
+  printf "$fmt" PORT UP NET ${all:+PID} PROJECT WHERE WHAT
+  while IFS="$TAB" read -r port pid kind up lan dir cmd allports proj; do
+    net=""; [ "$lan" = 1 ] && net="lan"
+    [ "$kind" != dev ] && cmd="[$kind] $cmd"
+    [ "$allports" != "$port" ] && cmd="(also ${allports#"$port",}) $cmd"
+    [ "${#dir}" -gt 34 ] && dir="…${dir:$((${#dir} - 33))}"
+    [ "${#proj}" -gt 22 ] && proj="${proj:0:21}…"
+    printf "$fmt" "$port" "$(age "$up")" "$net" ${all:+"$pid"} "$proj" "$dir" "$(printf '%s' "$cmd" | cut -c1-70)"
+    if [ "$kind" = dev ]; then
+      n=$((n + 1)); [ "$up" -ge "$OLD" ] && o=$((o + 1))
+    fi
+  done <<EOF
+$data
+EOF
+  np=$(printf '%s\n' "$data" | awk -F"$TAB" '$3 == "dev" && $9 != "-" { print $9 }' | sort -u | wc -l | tr -d ' ')
+  echo
+  echo "$(plural "$n" "dev server") in $(plural "$np" project), $o up for more than a day    stop: ports kill <port>  |  ports kill --older 7d"
+}
+
+# The listener plus the package-runner processes that only exist to hold it
+# (pnpm start, npm exec, next dev, tsx), top one first. Shells are left alone.
+chain() {
+  local pid="$1" out="$1" pp a i=0
+  while [ "$i" -lt 4 ]; do
+    pp=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    [ -n "$pp" ] && [ "$pp" -gt 1 ] || break
+    a=$(ps -o args= -p "$pp" 2>/dev/null)
+    printf '%s' "$a" | grep -Eq '(^|/)(pnpm|npm|npx|yarn|bun|tsx|next|turbo|nodemon)( |$)' || break
+    out="$pp $out"; pid="$pp"; i=$((i + 1))
+  done
+  printf '%s' "$out"
+}
+
+to_secs() {
+  case "$1" in
+    *d) echo $(( ${1%d} * 86400 )) ;;
+    *h) echo $(( ${1%h} * 3600 )) ;;
+    *m) echo $(( ${1%m} * 60 )) ;;
+    *) return 1 ;;
+  esac
+}
+
+cmd_kill() {
+  local sig=TERM older="" want="" data hit port pid kind up lan dir cmd allports proj p i rc=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -9|--force) sig=KILL ;;
+      --older)
+        shift
+        older=$(to_secs "${1:-}" 2>/dev/null) || { echo "ports: --older takes a duration such as 7d, 12h or 30m" >&2; return 2; }
+        ;;
+      *[!0-9]*|"") echo "ports: not a port: $1" >&2; return 2 ;;
+      *) want="$want $1" ;;
+    esac
+    shift
+  done
+  if [ -z "$want" ] && [ -z "$older" ]; then echo "ports: give one or more ports, or --older 7d" >&2; return 2; fi
+  data=$(rows)
+
+  for p in $want; do
+    hit=$(printf '%s\n' "$data" | awk -F"$TAB" -v p="$p" '{ n = split($8, a, ","); for (i = 1; i <= n; i++) if (a[i] == p) print }')
+    if [ -z "$hit" ]; then echo "$p: nothing listening"; rc=1; continue; fi
+    printf '%s\n' "$hit" | awk -F"$TAB" -v p="$p" '$3 != "dev" { print p ": " $7 " is a background " $3 ", left alone" }'
+  done
+
+  while IFS="$TAB" read -r port pid kind up lan dir cmd allports proj; do
+    [ "$kind" = dev ] || continue
+    hit=0
+    [ -n "$older" ] && [ "$up" -ge "$older" ] && hit=1
+    for p in $want; do
+      case ",$allports," in *",$p,"*) hit=1 ;; esac
+    done
+    [ "$hit" = 1 ] || continue
+    kill -s "$sig" $(chain "$pid") 2>/dev/null
+    i=0
+    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "$allports: still running (pid $pid). Try: ports kill -9 $port"; rc=1
+    else
+      echo "$allports: stopped  $proj, $dir  (up $(age "$up"))"
+    fi
+  done <<EOF
+$data
+EOF
+  rm -f "$CACHE/token"
+  return $rc
+}
+
+case "${1:-}" in
+  --token) cmd_token "${2:-}" ;;
+  --tsv) cmd_tsv ;;
+  --all|-a) cmd_list all ;;
+  kill) shift; cmd_kill "$@" ;;
+  -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+  "") cmd_list ;;
+  *) echo "ports: unknown option $1 (try --help)" >&2; exit 2 ;;
+esac

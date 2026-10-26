@@ -1,0 +1,43 @@
+{
+  "name": "clementrog",
+  "description": "Skills Clément Rog uses every day with Claude Code and Codex",
+  "owner": {
+    "name": "Clément Rog",
+    "url": "https://clementrog.com"
+  },
+  "plugins": [
+    {
+      "name": "crew",
+      "source": "./",
+      "strict": false,
+      "description": "Who builds, who reviews and who lands, between Claude and Codex. A fresh session of the other model reviews every slice.",
+      "skills": ["./skills/crew"],
+      "license": "MIT",
+      "homepage": "https://clementrog.com/how-i-dev"
+    },
+    {
+      "name": "pick-up",
+      "source": "./",
+      "strict": false,
+      "description": "Paste the last reply of a Claude Code or Codex session and carry on in another agent, for example after a usage limit.",
+      "skills": ["./skills/pick-up"],
+      "license": "MIT"
+    },
+    {
+      "name": "design-critic",
+      "source": "./",
+      "strict": false,
+      "description": "A design crit of a running app: walk real tasks, find controls and feedback in the wrong place, and mock the top fixes.",
+      "skills": ["./skills/design-critic"],
+      "license": "MIT"
+    },
+    {
+      "name": "ports",
+      "source": "./",
+      "strict": false,
+      "description": "Which dev servers are listening on this Mac, by project, and stop the leftovers. macOS only.",
+      "skills": ["./skills/ports"],
+      "license": "MIT"
+    }
+  ]
+}
