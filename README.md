@@ -1,45 +1,41 @@
 # Skills
 
-Four skills I use every day with Claude Code and Codex. Each one is a folder with a `SKILL.md`, and some come with a small script.
+Four skills I use every day with Claude Code and Codex. By [Clément Rog](https://clementrog.com).
 
-| Skill | What it does |
-|---|---|
-| [crew](skills/crew/SKILL.md) | Says who builds, who reviews and who lands, between Claude and Codex. A fresh session of the other model reviews every slice, blockers only, 3 rounds at most |
-| [pick-up](skills/pick-up/SKILL.md) | Paste the last reply of a Claude Code or Codex session, and another agent finds that session on your Mac and carries on. Handy after a usage limit |
-| [design-critic](skills/design-critic/SKILL.md) | A design crit of a running app: the agent walks real tasks, finds controls, context and feedback in the wrong place, and mocks the top fixes |
-| [ports](skills/ports/SKILL.md) | Lists the dev servers listening on your Mac, by project, and stops the leftovers |
+- **[crew](skills/crew/SKILL.md)**: Claude builds, Codex reviews, or the other way around. Every slice gets a fresh review.
+- **[pick-up](skills/pick-up/SKILL.md)**: hit a usage limit? Paste the last reply into another agent and it carries on.
+- **[design-critic](skills/design-critic/SKILL.md)**: a design crit of your running app, with the top fixes mocked.
+- **[ports](skills/ports/SKILL.md)**: see the dev servers your agents left running, and stop them.
 
 ## Install
 
-In Claude Code, add this repo as a plugin marketplace, then install the skills you want:
+Claude Code:
 
 ```
 /plugin marketplace add clementrog/skills
 /plugin install crew@clementrog
 ```
 
-The others are `pick-up@clementrog`, `design-critic@clementrog` and `ports@clementrog`. Plugin skills carry a prefix, so crew runs as `/crew:crew`. Most of the time you don't type it: the agent loads a skill when your request matches its description.
+The others are `pick-up@clementrog`, `design-critic@clementrog` and `ports@clementrog`.
 
-Without the plugin system, or for Codex, copy the folder:
+Codex, or by hand:
 
 ```sh
 git clone https://github.com/clementrog/skills
-mkdir -p ~/.claude/skills ~/.codex/skills
-cp -R skills/skills/crew ~/.claude/skills/   # Claude Code
-cp -R skills/skills/crew ~/.codex/skills/    # Codex
+mkdir -p ~/.codex/skills ~/.claude/skills
+cp -R skills/skills/crew ~/.codex/skills/
+cp -R skills/skills/crew ~/.claude/skills/
 ```
 
-## What each one needs
+## Good to know
 
-- **crew**: both the `claude` and `codex` CLIs, signed in. The why behind it is in [My way to software engineering](https://clementrog.com/how-i-dev).
-- **pick-up**: Python 3. It reads the local transcripts in `~/.claude` and `~/.codex` and makes no network request. The agent that carries on does see the excerpts it reads.
-- **design-critic**: a way to run the app, such as browser tools or Playwright. With screenshots only it does a static crit and says so. The method comes from Brian Lovin's public [Crit series](https://www.youtube.com/playlist?list=PLJu44Klx1pB_8GSOUeDNDllPICvMJKSut); the lenses are my reading of his videos, not his words.
-- **ports**: macOS. Projects are the folders under `~/projects`, `~/code`, `~/src` and a few others; set `PORTS_ROOTS` to change them.
+- crew needs both `claude` and `codex`, signed in. Why I work this way: [My way to software engineering](https://clementrog.com/how-i-dev).
+- pick-up reads your local transcripts in `~/.claude` and `~/.codex`. No network.
+- design-critic comes from Brian Lovin's [Crit series](https://www.youtube.com/playlist?list=PLJu44Klx1pB_8GSOUeDNDllPICvMJKSut). The lenses are my reading of his videos, not his words.
+- ports is macOS only. Set `PORTS_ROOTS` to change where your projects live.
 
-## More
+I also make Mac apps for people who work with agents all day: [clementrog.com/studio](https://clementrog.com/studio).
 
-I write about how I work with agents at [clementrog.com/notes](https://clementrog.com/notes), and I make Mac apps for people who work with agents all day at [clementrog.com/studio](https://clementrog.com/studio). One of them, [Onadit](https://onadit.com), keeps every Claude Code and Codex session on your Mac and lets your agents search them, so pick-up is the one-off version of it.
+## License
 
-Issues and pull requests are welcome.
-
-MIT licence.
+Released under the [MIT License](LICENSE).
