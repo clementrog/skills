@@ -82,6 +82,15 @@ When a reviewer's restraint and the user's stated look conflict (motion, colour)
 
 A `/goal` condition holds 4,000 characters, so point it to a spec file. The model that decides "done" reads only the conversation, so the goal names what the last message must show, with a SUCCESS and an INCOMPLETE ending.
 
+## Dispatch
+
+When the user asks to split work into sessions ("split it", "dispatch"), the front door plans them, starts them and steps back. `<crew>` below is the `crew` folder in `git rev-parse --path-format=absolute --git-common-dir`, shared by every worktree.
+
+1. Cut the work into slices that touch different files, at most 3 running at once unless the user says otherwise. Write one brief per slice in `<crew>/<slice>.md`: what the user asked, the slice's "Done when", the files it owns, who builds and who reviews (the user's choice, else the front door's model builds).
+2. Start each slice as a whole session in its own worktree (rule 1), in a new terminal tab, with a first prompt such as "Use the crew skill: build the slice in `<crew>/<slice>.md`". When no tab can open (a locked screen), run that slice from the front door instead: the Build row above in the background, then the usual review.
+3. Whoever runs a slice writes `<crew>/<slice>.ship` on SHIP (branch, reviewed commit, verdict file), then looks: when every brief has its `.ship`, it lands them all; otherwise it stops, and the last one to finish lands. If the landing lock is held, wait for it, then look again.
+4. A slice that goes to the user holds the landing until they decide. The lander removes the briefs and `.ship` files it landed.
+
 ## Landing
 
 - Take the landing lock: `mkdir <repo>/.git/crew-landing` (it fails if another lander holds it). Write who and when inside; remove it when done. One older than an hour with no live session behind it can be removed, saying so.
