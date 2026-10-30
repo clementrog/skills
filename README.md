@@ -1,6 +1,6 @@
 # Skills
 
-Four skills I use every day with Claude Code and Codex. By [Clément Rog](https://clementrog.com).
+4 skills I use every day with Claude Code and Codex. By [Clément Rog](https://clementrog.com).
 
 - **[crew](skills/crew/SKILL.md)**: Claude builds, Codex reviews, or the other way around. Every slice gets a fresh review.
 - **[pick-up](skills/pick-up/SKILL.md)**: hit a usage limit? Paste the last reply into another agent and it carries on.
